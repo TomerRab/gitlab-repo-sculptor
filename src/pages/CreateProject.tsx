@@ -14,7 +14,10 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { gitlabApi } from '@/lib/api';
 import { GitLabGroup } from '@/types/gitlab';
-import { ArrowLeft, GitBranch } from 'lucide-react';
+import { ArrowLeft, GitBranch, Check, ChevronsUpDown } from 'lucide-react';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
 import { useState, useEffect } from 'react';
 
 const projectSchema = z.object({
@@ -22,11 +25,9 @@ const projectSchema = z.object({
   groupId: z.number().min(1, 'Group selection is required'),
   projectType: z.enum(['library', 'monorepo', 'microservice', 'delivery']),
   stack: z.enum(['maven', 'node', 'react', 'spring', 'typescript', 'javascript', 'vue', 'python', 'dotnet', 'csharp']).optional(),
+  deploymentServer: z.enum(['a', 'b']).optional(),
   namespace: z.string().optional(),
-  openshiftServerA: z.string().optional(),
-  openshiftServerB: z.string().optional(),
-  openshiftServerC: z.string().optional(),
-  openshiftServerD: z.string().optional(),
+  clusterUrl: z.string().optional(),
 });
 
 type ProjectForm = z.infer<typeof projectSchema>;
@@ -38,6 +39,7 @@ const CreateProject = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [groups, setGroups] = useState<GitLabGroup[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
 
   const form = useForm<ProjectForm>({
     resolver: zodResolver(projectSchema),
@@ -106,12 +108,8 @@ const CreateProject = () => {
         stack: data.stack,
         namespace: data.namespace,
         credentials,
-        openshiftServers: {
-          a: data.openshiftServerA,
-          b: data.openshiftServerB,
-          c: data.openshiftServerC,
-          d: data.openshiftServerD,
-        },
+        deploymentServer: data.deploymentServer,
+        clusterUrl: data.clusterUrl,
       };
 
       await gitlabApi.createProject(projectData);
@@ -178,25 +176,56 @@ const CreateProject = () => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>GitLab Group</FormLabel>
-                      <Select 
-                        onValueChange={(value) => field.onChange(parseInt(value))} 
-                        disabled={loadingGroups}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue 
-                              placeholder={loadingGroups ? "Loading groups..." : "Select a group"} 
-                            />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {groups.map((group) => (
-                            <SelectItem key={group.id} value={group.id.toString()}>
-                              {group.full_path}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={groupOpen} onOpenChange={setGroupOpen}>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={groupOpen}
+                              className={cn(
+                                "w-full justify-between",
+                                !field.value && "text-muted-foreground"
+                              )}
+                              disabled={loadingGroups}
+                            >
+                              {field.value
+                                ? groups.find((group) => group.id === field.value)?.full_path
+                                : loadingGroups ? "Loading groups..." : "Search and select group..."
+                              }
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-full p-0">
+                          <Command>
+                            <CommandInput placeholder="Search groups..." />
+                            <CommandList>
+                              <CommandEmpty>No groups found.</CommandEmpty>
+                              <CommandGroup>
+                                {groups.map((group) => (
+                                  <CommandItem
+                                    key={group.id}
+                                    value={group.full_path}
+                                    onSelect={() => {
+                                      field.onChange(group.id);
+                                      setGroupOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        field.value === group.id ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {group.full_path}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -281,75 +310,62 @@ const CreateProject = () => {
                     
                     <FormField
                       control={form.control}
-                      name="namespace"
+                      name="deploymentServer"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Deployment Namespace</FormLabel>
+                          <FormLabel>Deployment Server</FormLabel>
                           <FormControl>
-                            <Input placeholder="my-app-namespace" {...field} />
+                            <RadioGroup
+                              onValueChange={field.onChange}
+                              defaultValue={field.value}
+                              className="flex gap-6"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="a" id="server-a" />
+                                <Label htmlFor="server-a">Server A</Label>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="b" id="server-b" />
+                                <Label htmlFor="server-b">Server B</Label>
+                              </div>
+                            </RadioGroup>
                           </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="openshiftServerA"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>OpenShift Server A</FormLabel>
-                            <FormControl>
-                              <Input placeholder="https://cluster-a.example.com" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                    {form.watch('deploymentServer') && (
+                      <>
+                        <FormField
+                          control={form.control}
+                          name="namespace"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Deployment Namespace</FormLabel>
+                              <FormControl>
+                                <Input placeholder="my-app-namespace" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                      <FormField
-                        control={form.control}
-                        name="openshiftServerB"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>OpenShift Server B</FormLabel>
-                            <FormControl>
-                              <Input placeholder="https://cluster-b.example.com" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="openshiftServerC"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>OpenShift Server C</FormLabel>
-                            <FormControl>
-                              <Input placeholder="https://cluster-c.example.com" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="openshiftServerD"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>OpenShift Server D</FormLabel>
-                            <FormControl>
-                              <Input placeholder="https://cluster-d.example.com" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+                        <FormField
+                          control={form.control}
+                          name="clusterUrl"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Cluster URL</FormLabel>
+                              <FormControl>
+                                <Input placeholder={`https://cluster-${form.watch('deploymentServer')}.example.com`} {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
+                    )}
                   </div>
                 )}
 
