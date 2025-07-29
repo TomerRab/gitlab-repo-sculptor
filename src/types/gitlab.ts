@@ -9,20 +9,23 @@ export interface GitLabGroup {
   full_path: string;
 }
 
+export interface ServerConfig {
+  namespace: string;
+}
+
 export interface ProjectConfig {
   name: string;
   groupId: number;
   projectType: 'library' | 'monorepo' | 'microservice' | 'delivery';
   stack?: 'maven' | 'node' | 'react' | 'spring' | 'typescript' | 'javascript' | 'vue' | 'python' | 'dotnet' | 'csharp';
-  namespace?: string;
   openshiftServers?: {
-    a?: string;
-    b?: string;
-    c?: string;
-    d?: string;
+    a?: ServerConfig;
+    b?: ServerConfig;
+    c?: ServerConfig;
+    d?: ServerConfig;
   };
 }
 
 export interface CreateProjectRequest extends ProjectConfig {
   credentials: GitLabCredentials;
-}
+}  

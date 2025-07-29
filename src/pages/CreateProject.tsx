@@ -1,4 +1,3 @@
-import React from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -9,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,16 +18,19 @@ import { ArrowLeft, GitBranch, Check, ChevronsUpDown } from 'lucide-react';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 
 const projectSchema = z.object({
   name: z.string().min(1, 'Project name is required'),
   groupId: z.number().min(1, 'Group selection is required'),
   projectType: z.enum(['library', 'monorepo', 'microservice', 'delivery']),
   stack: z.enum(['maven', 'node', 'react', 'spring', 'typescript', 'javascript', 'vue', 'python', 'dotnet', 'csharp']).optional(),
-  deploymentServer: z.enum(['a', 'b']).optional(),
-  namespace: z.string().optional(),
-  clusterUrl: z.string().optional(),
+  openshiftServers: z.object({
+    a: z.object({ namespace: z.string().min(1, 'Namespace is required') }).optional(),
+    b: z.object({ namespace: z.string().min(1, 'Namespace is required') }).optional(),
+    c: z.object({ namespace: z.string().min(1, 'Namespace is required') }).optional(),
+    d: z.object({ namespace: z.string().min(1, 'Namespace is required') }).optional(),
+  }).optional(),
 });
 
 type ProjectForm = z.infer<typeof projectSchema>;
@@ -40,6 +43,12 @@ const CreateProject = () => {
   const [groups, setGroups] = useState<GitLabGroup[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<GitLabGroup[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  
+  // Cache for search results to avoid repeat API calls
+  const searchCache = useMemo(() => new Map<string, GitLabGroup[]>(), []);
 
   const form = useForm<ProjectForm>({
     resolver: zodResolver(projectSchema),
@@ -47,10 +56,102 @@ const CreateProject = () => {
       name: '',
       groupId: 0,
       projectType: 'library',
+      openshiftServers: {},
     },
   });
 
   const projectType = form.watch('projectType');
+  const openshiftServers = form.watch('openshiftServers') || {};
+  
+  const servers = [
+    { key: 'a' as const, label: 'Server A' },
+    { key: 'b' as const, label: 'Server B' },
+    { key: 'c' as const, label: 'Server C' },
+    { key: 'd' as const, label: 'Server D' },
+  ];
+
+  const isServerSelected = (serverKey: 'a' | 'b' | 'c' | 'd') => {
+    return !!openshiftServers[serverKey];
+  };
+
+  const toggleServer = (serverKey: 'a' | 'b' | 'c' | 'd', checked: boolean) => {
+    const currentServers = form.getValues('openshiftServers') || {};
+    if (checked) {
+      form.setValue('openshiftServers', {
+        ...currentServers,
+        [serverKey]: { namespace: '' }
+      });
+    } else {
+      const { [serverKey]: removed, ...remainingServers } = currentServers;
+      form.setValue('openshiftServers', remainingServers);
+    }
+  };
+
+  // Debounced search function
+  const debouncedSearch = useCallback(
+    (term: string) => {
+      const timeoutId = setTimeout(async () => {
+        if (term.length >= 3 && credentials) {
+          // Check cache first
+          if (searchCache.has(term)) {
+            setSearchResults(searchCache.get(term)!);
+            setIsSearching(false);
+            return;
+          }
+
+          try {
+            setIsSearching(true);
+            const results = await gitlabApi.searchGroups(credentials, term);
+            searchCache.set(term, results);
+            setSearchResults(results);
+          } catch (error) {
+            console.error('Search failed:', error);
+            setSearchResults([]);
+          } finally {
+            setIsSearching(false);
+          }
+        } else {
+          setSearchResults([]);
+          setIsSearching(false);
+        }
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
+    },
+    [credentials, searchCache]
+  );
+
+  // Combined groups: common groups + search results (deduplicated)
+  const displayGroups = useMemo(() => {
+    if (searchTerm.length >= 3) {
+      // Show search results, but also include any common groups that match
+      const commonMatches = groups.filter(g => 
+        g.full_path.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+      
+      // Deduplicate by ID
+      const combined = [...commonMatches, ...searchResults];
+      const unique = combined.filter((group, index, self) => 
+        self.findIndex(g => g.id === group.id) === index
+      );
+      
+      return unique;
+    }
+    
+    return groups; // Show common groups
+  }, [groups, searchResults, searchTerm]);
+
+  // Handle search input changes
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchTerm(value);
+    if (value.length >= 3) {
+      setIsSearching(true);
+      debouncedSearch(value);
+    } else {
+      setSearchResults([]);
+      setIsSearching(false);
+    }
+  }, [debouncedSearch]);
 
   useEffect(() => {
     if (!credentials) {
@@ -65,32 +166,31 @@ const CreateProject = () => {
     
     setLoadingGroups(true);
     
-    // Mock groups data for now
-    setTimeout(() => {
+    try {
+      // Load common/recent groups first (fast loading)
+      const commonGroups = await gitlabApi.getCommonGroups(credentials, 200);
+      setGroups(commonGroups);
+    } catch (error) {
+      console.error('Failed to load common groups:', error);
+      // Fallback to mock data in development
       const mockGroups = [
         { id: 1, name: 'frontend-team', full_path: 'company/frontend-team' },
         { id: 2, name: 'backend-team', full_path: 'company/backend-team' },
         { id: 3, name: 'devops-team', full_path: 'company/devops-team' },
         { id: 4, name: 'platform-team', full_path: 'company/platform-team' },
+        { id: 5, name: 'mobile-team', full_path: 'company/mobile-team' },
+        { id: 6, name: 'qa-team', full_path: 'company/qa-team' },
       ];
       setGroups(mockGroups);
-      setLoadingGroups(false);
-    }, 500);
-    
-    /* TODO: Replace with actual API call later
-    try {
-      const gitlabGroups = await gitlabApi.getGroups(credentials);
-      setGroups(gitlabGroups);
-    } catch (error) {
+      
       toast({
-        title: 'Failed to load groups',
-        description: 'Unable to fetch GitLab groups',
-        variant: 'destructive',
+        title: 'Using offline mode',
+        description: 'Showing sample groups. Backend connection needed for full functionality.',
+        variant: 'default',
       });
     } finally {
       setLoadingGroups(false);
     }
-    */
   };
 
   const requiresStack = projectType !== 'delivery';
@@ -101,15 +201,23 @@ const CreateProject = () => {
     
     setIsLoading(true);
     try {
+      // Filter out servers without namespaces and ensure namespace is not empty
+      const validServers: { [key: string]: { namespace: string } } = {};
+      if (data.openshiftServers) {
+        Object.entries(data.openshiftServers).forEach(([key, server]) => {
+          if (server && server.namespace && server.namespace.trim()) {
+            validServers[key] = { namespace: server.namespace.trim() };
+          }
+        });
+      }
+
       const projectData = {
         name: data.name,
         groupId: data.groupId,
         projectType: data.projectType,
         stack: data.stack,
-        namespace: data.namespace,
+        openshiftServers: Object.keys(validServers).length > 0 ? validServers : undefined,
         credentials,
-        deploymentServer: data.deploymentServer,
-        clusterUrl: data.clusterUrl,
       };
 
       await gitlabApi.createProject(projectData);
@@ -190,7 +298,7 @@ const CreateProject = () => {
                               disabled={loadingGroups}
                             >
                               {field.value
-                                ? groups.find((group) => group.id === field.value)?.full_path
+                                ? displayGroups.find((group) => group.id === field.value)?.full_path
                                 : loadingGroups ? "Loading groups..." : "Search and select group..."
                               }
                               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -199,17 +307,28 @@ const CreateProject = () => {
                         </PopoverTrigger>
                         <PopoverContent className="w-full p-0">
                           <Command>
-                            <CommandInput placeholder="Search groups..." />
+                            <CommandInput 
+                              placeholder="Search groups..." 
+                              value={searchTerm}
+                              onValueChange={handleSearchChange}
+                            />
                             <CommandList>
-                              <CommandEmpty>No groups found.</CommandEmpty>
+                              <CommandEmpty>
+                                {isSearching ? "Searching server..." : 
+                                searchTerm.length >= 3 ? "No groups found." : 
+                                searchTerm.length > 0 ? "Type at least 3 characters for server search" :
+                                "Start typing to search groups"}
+                              </CommandEmpty>
                               <CommandGroup>
-                                {groups.map((group) => (
+                                {displayGroups.map((group) => (
                                   <CommandItem
                                     key={group.id}
                                     value={group.full_path}
                                     onSelect={() => {
                                       field.onChange(group.id);
                                       setGroupOpen(false);
+                                      setSearchTerm('');
+                                      setSearchResults([]);
                                     }}
                                   >
                                     <Check
@@ -219,6 +338,9 @@ const CreateProject = () => {
                                       )}
                                     />
                                     {group.full_path}
+                                    {searchTerm.length >= 3 && searchResults.some(r => r.id === group.id) && (
+                                      <span className="ml-auto text-xs text-muted-foreground bg-muted px-1 rounded">server result</span>
+                                    )}
                                   </CommandItem>
                                 ))}
                               </CommandGroup>
@@ -226,6 +348,9 @@ const CreateProject = () => {
                           </Command>
                         </PopoverContent>
                       </Popover>
+                      <FormDescription>
+                        Common groups are shown immediately. Type 3+ characters to search server for additional groups.
+                      </FormDescription>  
                       <FormMessage />
                     </FormItem>
                   )}
@@ -307,65 +432,38 @@ const CreateProject = () => {
                 {requiresDeployment && (
                   <div className="space-y-4">
                     <h3 className="text-lg font-medium">Deployment Configuration</h3>
+                    <p className="text-sm text-muted-foreground">Select the OpenShift servers and provide a namespace for each.</p>
                     
-                    <FormField
-                      control={form.control}
-                      name="deploymentServer"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Deployment Server</FormLabel>
-                          <FormControl>
-                            <RadioGroup
-                              onValueChange={field.onChange}
-                              defaultValue={field.value}
-                              className="flex gap-6"
-                            >
-                              <div className="flex items-center space-x-2">
-                                <RadioGroupItem value="a" id="server-a" />
-                                <Label htmlFor="server-a">Server A</Label>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <RadioGroupItem value="b" id="server-b" />
-                                <Label htmlFor="server-b">Server B</Label>
-                              </div>
-                            </RadioGroup>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    {form.watch('deploymentServer') && (
-                      <>
-                        <FormField
-                          control={form.control}
-                          name="namespace"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Deployment Namespace</FormLabel>
-                              <FormControl>
-                                <Input placeholder="my-app-namespace" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
+                    <div className="space-y-4">
+                      {servers.map((server) => (
+                        <div key={server.key} className="space-y-2">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`server-${server.key}`}
+                              checked={isServerSelected(server.key)}
+                              onCheckedChange={(checked) => toggleServer(server.key, checked as boolean)}
+                            />
+                            <Label htmlFor={`server-${server.key}`}>{server.label}</Label>
+                          </div>
+                          
+                          {isServerSelected(server.key) && (
+                            <FormField
+                              control={form.control}
+                              name={`openshiftServers.${server.key}.namespace`}
+                              render={({ field }) => (
+                                <FormItem className="ml-6">
+                                  <FormLabel>Namespace for {server.label}</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder={`${server.key}-namespace`} {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
                           )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="clusterUrl"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Cluster URL</FormLabel>
-                              <FormControl>
-                                <Input placeholder={`https://cluster-${form.watch('deploymentServer')}.example.com`} {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </>
-                    )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 

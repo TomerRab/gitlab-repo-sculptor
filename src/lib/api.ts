@@ -37,6 +37,40 @@ export const gitlabApi = {
     return response.json();
   },
 
+  // Get common/recent groups for fast loading
+  getCommonGroups: async (credentials: GitLabCredentials, limit: number = 200): Promise<GitLabGroup[]> => {
+    const response = await fetch(`${API_BASE_URL}/gitlab/groups/common?limit=${limit}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(credentials),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch common groups');
+    }
+    
+    return response.json();
+  },
+
+  // Search groups by term  
+  searchGroups: async (credentials: GitLabCredentials, searchTerm: string, limit: number = 50): Promise<GitLabGroup[]> => {
+    const response = await fetch(`${API_BASE_URL}/gitlab/groups/search?q=${encodeURIComponent(searchTerm)}&limit=${limit}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(credentials),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to search groups');
+    }
+    
+    return response.json();
+  },
+
   // Create project
   createProject: async (projectData: CreateProjectRequest): Promise<any> => {
     const response = await fetch(`${API_BASE_URL}/gitlab/create-project`, {
