@@ -35,6 +35,20 @@ const Login = () => {
 
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
+    
+    // Mock authentication - skip API call for now
+    setTimeout(() => {
+      const credentials = { username: data.username, password: data.password };
+      setCredentials(credentials);
+      toast({
+        title: 'Authentication successful',
+        description: 'Welcome to GitLab Project Creator',
+      });
+      navigate('/create-project');
+      setIsLoading(false);
+    }, 1000);
+    
+    /* TODO: Replace with actual API call later
     try {
       const credentials = { username: data.username, password: data.password };
       const isValid = await gitlabApi.validateCredentials(credentials);
@@ -55,6 +69,7 @@ const Login = () => {
     } finally {
       setIsLoading(false);
     }
+    */
   };
 
   return (

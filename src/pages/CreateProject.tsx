@@ -62,6 +62,20 @@ const CreateProject = () => {
     if (!credentials) return;
     
     setLoadingGroups(true);
+    
+    // Mock groups data for now
+    setTimeout(() => {
+      const mockGroups = [
+        { id: 1, name: 'frontend-team', full_path: 'company/frontend-team' },
+        { id: 2, name: 'backend-team', full_path: 'company/backend-team' },
+        { id: 3, name: 'devops-team', full_path: 'company/devops-team' },
+        { id: 4, name: 'platform-team', full_path: 'company/platform-team' },
+      ];
+      setGroups(mockGroups);
+      setLoadingGroups(false);
+    }, 500);
+    
+    /* TODO: Replace with actual API call later
     try {
       const gitlabGroups = await gitlabApi.getGroups(credentials);
       setGroups(gitlabGroups);
@@ -74,6 +88,7 @@ const CreateProject = () => {
     } finally {
       setLoadingGroups(false);
     }
+    */
   };
 
   const requiresStack = projectType !== 'delivery';
